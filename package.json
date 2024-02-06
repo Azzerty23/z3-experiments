@@ -1,0 +1,48 @@
+{
+  "name": "node-typescript-jest-boilerplate",
+  "version": "0.0.1",
+  "description": "NodeJS typescript + jest boilerplate",
+  "keywords": [
+    "boilerplate",
+    "typescript",
+    "jest"
+  ],
+  "author": "Brian Schlenker <bschlenk@umich.edu>",
+  "license": "MIT",
+  "repository": "bschlenk/node-typescript-jest-boilerplate",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "!**/__tests__/**/*"
+  ],
+  "scripts": {
+    "clean": "rm -rf build coverage",
+    "lint": "eslint src",
+    "lint:fix": "npm run lint -- --fix",
+    "test:unit": "jest",
+    "test:watch": "npm run jest -- --watch",
+    "test": "npm run lint && npm run test:unit",
+    "watch": "nodemon",
+    "build": "tsc",
+    "prepublishOnly": "npm run test && npm run build"
+  },
+  "dependencies": {
+    "z3-solver": "^4.12.5"
+  },
+  "devDependencies": {
+    "@types/jest": "^26.0.24",
+    "@types/node": "^16.18.79",
+    "@typescript-eslint/eslint-plugin": "^4.33.0",
+    "@typescript-eslint/parser": "^4.33.0",
+    "eslint": "^7.32.0",
+    "eslint-config-prettier": "^8.10.0",
+    "eslint-plugin-import": "^2.29.1",
+    "jest": "^27.5.1",
+    "nodemon": "^2.0.22",
+    "prettier": "^2.8.8",
+    "ts-jest": "^27.1.5",
+    "ts-node": "^10.0.0",
+    "typescript": "^4.9.5"
+  }
+}
