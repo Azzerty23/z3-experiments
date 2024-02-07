@@ -142,32 +142,37 @@
 // -> alcohol level < 5° allowed between 16 and 18 years old
 
 // zmodel policy rules:
-// @@allow('read', ( inStock || status == "restocking" ) && ( (auth().age > 16 && alcoholLevel < 5) || auth().age > 18) )
+// @@allow('read', ( manufacturer == auth() || auth().profile.mantra == "zen" ) && ( inStock || status == "restocking" ) && ( (auth().age >= 16 && alcoholLevel < 5) || auth().age >= 18) )
+
+import * as util from 'util';
 
 import { type Arith, type Bool, init, Context } from 'z3-solver';
 import { killThreads } from './utils';
 
-const preprocessArgs = (args: any, literalChecks: Record<string, string>) => {
+const preprocessArgs = (
+  args: any,
+  literalChecks: Record<string, string>,
+  parent?: string,
+) => {
   const result = {} as any;
+  if (typeof args === 'string') {
+    // { condition: { OR: ['string', 'string'] } }
+    return args === literalChecks[parent as keyof typeof literalChecks];
+  }
   for (const key in args) {
     if (Array.isArray(args[key as keyof typeof args])) {
       result[key] = (args[key as keyof typeof args] as OrFilter[]).map((arg) =>
-        preprocessArgs(arg, literalChecks),
+        preprocessArgs(arg, literalChecks, key === 'OR' ? parent : key),
       );
     } else if (typeof args[key as keyof typeof args] === 'object') {
       result[key] = preprocessArgs(
         args[key as keyof typeof args],
         literalChecks,
+        key === 'OR' ? parent : key,
       );
     } else if (typeof args[key as keyof typeof args] === 'string') {
       const valueToTransform = literalChecks[key];
-      if (valueToTransform) {
-        result[key] = args[key as keyof typeof args] === valueToTransform;
-      } else {
-        // result[key] = !!args[key as keyof typeof args];
-        console.log(literalChecks, key, args[key as keyof typeof args]);
-        throw new Error(`Invalid literal check for ${key}`);
-      }
+      result[key] = args[key as keyof typeof args] === valueToTransform;
     } else {
       result[key] = args[key as keyof typeof args];
     }
@@ -176,25 +181,50 @@ const preprocessArgs = (args: any, literalChecks: Record<string, string>) => {
 };
 
 export async function checker(args: Filter, user?: any) {
-  const newArgs = preprocessArgs(args, { status: 'restocking' });
+  const checkedArgs = preprocessArgs(args, {
+    status: 'restocking',
+    'user.profile.mantra': 'zen',
+  });
+  const checkedArgsWithAuth = { ...checkedArgs, _withAuth: !!user?.id };
+  console.log('args', util.formatWithOptions({ depth: 20 }, args));
+  console.log(
+    'checkedArgs',
+    util.formatWithOptions({ depth: 20 }, checkedArgsWithAuth),
+  );
   const { Context, em } = await init();
   const z3 = Context('main');
   const { Solver, Int, Bool, Or, And } = z3;
 
   // create variables
   const userAge = Int.const('user.age'); // to generate dynamically
+  const userId = Int.const('user.id'); // to generate dynamically
+  const userProfileMantra = Bool.const('user.profile.mantra'); // to generate dynamically
   const alcoholLevel = Int.const('alcoholLevel'); // to generate dynamically
   const inStock = Bool.const('inStock'); // to generate dynamically
   const status = Bool.const('status'); // to generate dynamically
-  const variables = { userAge, alcoholLevel, inStock, status }; // to generate dynamically
+  const manufacturerId = Int.const('manufacturerId'); // to generate dynamically
+  const _withAuth = Bool.const('_withAuth');
+  const variables = {
+    userAge,
+    userId,
+    userProfileMantra,
+    alcoholLevel,
+    inStock,
+    status,
+    manufacturerId,
+    _withAuth,
+  }; // to generate dynamically
 
   const solver = new Solver();
-  console.log('args', newArgs);
-  const assertions = buildAssertions(variables, newArgs, user, z3);
+  const assertions = buildAssertions(variables, checkedArgsWithAuth, user, z3);
   solver.add(...assertions);
+  // to generate dynamically
   solver.add(
-    Or(inStock, status), // to generate dynamically
-    Or(userAge.ge(18), And(userAge.ge(16), alcoholLevel.lt(5))), // to generate dynamically
+    Or(And(userId.eq(manufacturerId), _withAuth), userProfileMantra),
+    And(
+      Or(inStock, status),
+      Or(userAge.ge(18), And(userAge.ge(16), alcoholLevel.lt(5))),
+    ),
   );
   let solution: Record<string, string> = {};
   if ((await solver.check()) === 'sat') {
@@ -202,8 +232,9 @@ export async function checker(args: Filter, user?: any) {
     model.decls().forEach((decl) => {
       solution[`${decl.name()}`] = `${model.get(decl)}`;
     });
+    const formattedAssertions = assertions.map((a) => a.toString());
     await killThreads(em);
-    return { result: true, solution };
+    return { result: true, assertions: formattedAssertions, solution };
   } else {
     console.error("couldn't find a solution");
     await killThreads(em);
@@ -221,7 +252,9 @@ type Condition =
   | BoolCondition
   | OrCondition
   | StringCondition;
-type OrCondition = { OR: NumericCondition[] | OrCondition[] };
+type OrCondition = {
+  OR: NumericCondition[] | StringCondition[] | OrCondition[];
+};
 type RangeFilter = Record<string, Condition>;
 type OrFilter = { OR: RangeFilter[] | OrFilter[] };
 type Filter = RangeFilter | OrFilter;
@@ -231,11 +264,13 @@ type Expr = NumberExpr | Assertion;
 
 const processCondition = (
   variable: Expr,
-  condition: Exclude<Condition, StringCondition>, // string conditions are processed as boolean
+  condition: Exclude<Condition, StringCondition>, // string conditions are processed as assertions
   z3: Context<'main'>,
 ): Assertion[] => {
   const assertions: Assertion[] = [];
-  if (typeof condition === 'number') {
+  if (typeof condition === 'undefined') {
+    // noop
+  } else if (typeof condition === 'number') {
     assertions.push(variable.eq(condition));
   } else if (typeof condition === 'boolean') {
     assertions.push(variable.eq(condition));
@@ -243,6 +278,10 @@ const processCondition = (
     const orCondition = condition;
     const tempAssertions: Assertion[] = [];
     for (const condition of orCondition.OR) {
+      if (typeof condition === 'string') {
+        // string are pre-processed and transformed as Assertion
+        throw `Invalid OR condition for string ${condition}`;
+      }
       tempAssertions.push(...processCondition(variable, condition, z3));
     }
     const orAssertion = z3.Or(...tempAssertions);
@@ -305,6 +344,7 @@ const processFilter = (
   }
   const tempAssertions: Assertion[] = [];
   for (const [property, condition] of Object.entries(filter)) {
+    // TODO: handle nested properties
     const renamedProperty = isUserFilter ? `user.${property}` : property;
     const variable = variables[renamedProperty];
     if (variable) {
@@ -333,6 +373,7 @@ export const buildAssertions = (
     const realName = variables[name].name() as string;
     variableRegistry[realName] = variables[name];
   }
+
   const argsAssertions = processFilter(variableRegistry, z3, args);
   const userAssertions = processFilter(variableRegistry, z3, user, true);
   const assertions = [...argsAssertions, ...userAssertions];
