@@ -1,138 +1,6 @@
-// Example 1
-
-// import { init } from "z3-solver";
-// const { Context } = await init();
-// const { Solver, Int, And } = Context("main");
-
-// const x = Int.const("x");
-
-// const solver = new Solver();
-// solver.add(And(x.eq(0), x.ge(1), x.le(20)));
-// console.log(await solver.check());
-// try {
-//   const model = solver.model();
-//   console.log(model.get(x).toString());
-// } catch (e: unknown) {
-//   console.error(e instanceof Error ? e.message : e);
-// }
-
-// Example 2 (from chatGPT)
-
-// import { init } from "z3-solver";
-// const { Context } = await init();
-// const { Solver, Int, And } = Context("main");
-
-// // Create a Z3 context
-// const solver = new Solver();
-
-// // Define the variable x as an integer
-// const x = Int.const("x");
-
-// // Add the conditions to the solver
-// solver.add(x.gt(18));
-// solver.add(And(x.gt(1), x.lt(20)));
-
-// // Check if the conditions are solvable
-// const result = await solver.check();
-
-// if (result === "sat") {
-//   // If solvable, get the model
-//   const model = solver.model();
-//   // Print the satisfying assignment for x
-//   console.log("Satisfying assignment for x:", model.eval(x, true).toString());
-// } else {
-//   console.log("Conditions are not solvable.");
-// }
-
-// Example 3 (from the source code)
-
-// import { init } from "z3-solver";
-// const { Context, em } = await init();
-// const { Solver, Int } = Context("main");
-// const x = Int.const("x");
-// const y = Int.const("y");
-// const solver = new Solver();
-// solver.add(x.add(2).le(y.sub(10))); // x + 2 <= y - 10
-// if ((await solver.check()) !== "sat") {
-//   throw new Error("couldn't find a solution");
-// }
-// const model = solver.model();
-// console.log(`x=${model.get(x)}, y=${model.get(y)}`);
-// // x=0, y=12
-// // exit process: https://github.com/Z3Prover/z3/issues/7070#issuecomment-1871017371
-// em.PThread.terminateAllThreads();
-
-// Example 4 (updated example 3 with IIFE like in the official example)
-// https://github.com/Z3Prover/z3/blob/master/src/api/js/examples/high-level/using_smtlib2.ts
-
-// import process from "process";
-// import { init } from "z3-solver";
-
-// (async () => {
-//   const { Context } = await init();
-//   const { Solver, Int } = Context("main");
-//   const x = Int.const("x");
-//   const y = Int.const("y");
-//   const solver = new Solver();
-//   solver.add(x.add(2).le(y.sub(10))); // x + 2 <= y - 10
-//   if ((await solver.check()) !== "sat") {
-//     throw new Error("couldn't find a solution");
-//   }
-//   const model = solver.model();
-//   console.log(`x=${model.get(x)}, y=${model.get(y)}`);
-//   // x=0, y=12
-//   process.exit(0);
-// })().catch((e) => {
-//   console.error("error", e);
-//   process.exit(1);
-// });
-
-// Example 5 (from https://microsoft.github.io/z3guide/programming/Z3%20JavaScript%20Examples)
-
-// import { init } from "z3-solver";
-// const { Context } = await init();
-// const { Bool, Or, Implies, Not, solve } = Context("main");
-
-// const [tie, shirt] = [Bool.const("tie"), Bool.const("shirt")];
-// const result = await solve(
-//   Or(tie, shirt),
-//   Implies(tie, shirt),
-//   Or(Not(tie), Not(shirt))
-// );
-// console.log(result.toString());
-// // (define-fun tie () Bool
-// //   false)
-// // (define-fun shirt () Bool
-// //   true)
-// process.exit(0);
-
-// Example 6 (inside child process)
-
-// import { spawn } from "child_process";
-
-// const command = "node";
-// const scriptPath = "./dist/childProcess";
-// const args = [scriptPath];
-
-// // Spawn the child process
-// // const result = spawnSync(command, args);
-// // console.log(result.output.toString());
-// const childProcess = spawn(command, args);
-
-// // Listen for output events
-// childProcess.stdout.on("data", (data) => {
-//   console.log(`stdout: ${data}`);
-// });
-
-// childProcess.stderr.on("data", (data) => {
-//   console.error(`stderr: ${data}`);
-// });
-
-// console.log("Hello after exited child process");
-
 // #################################################################################
 // #                                                                               #
-// #                                 Permission checker                            #
+// #                                Permissions checker                            #
 // #                                                                               #
 // #################################################################################
 
@@ -142,48 +10,20 @@
 // -> alcohol level < 5° allowed between 16 and 18 years old
 
 // zmodel policy rules:
-// @@allow('read', ( manufacturer == auth() || auth().profile.mantra == "zen" ) && ( inStock || status == "restocking" ) && ( (auth().age >= 16 && alcoholLevel < 5) || auth().age >= 18) )
+// @@allow('read', ( status == "test" && age == 0 ) && ( manufacturer == auth() || auth().profile.mantra == "zen" ) && ( inStock || status == "restocking" || startsWith(status, "stock") ) && ( (auth().age >= 16 && alcoholLevel < 5) || auth().age >= 18) )
+// @@allow('read', space.members?[user == auth()]
 
 import * as util from 'util';
 
 import { type Arith, type Bool, init, Context } from 'z3-solver';
 import { killThreads } from './utils';
 
-const preprocessArgs = (
-  args: any,
-  literalChecks: Record<string, string>,
-  parent?: string,
-) => {
-  const result = {} as any;
-  if (typeof args === 'string') {
-    // { condition: { OR: ['string', 'string'] } }
-    return args === literalChecks[parent as keyof typeof literalChecks];
-  }
-  for (const key in args) {
-    if (Array.isArray(args[key as keyof typeof args])) {
-      result[key] = (args[key as keyof typeof args] as OrFilter[]).map((arg) =>
-        preprocessArgs(arg, literalChecks, key === 'OR' ? parent : key),
-      );
-    } else if (typeof args[key as keyof typeof args] === 'object') {
-      result[key] = preprocessArgs(
-        args[key as keyof typeof args],
-        literalChecks,
-        key === 'OR' ? parent : key,
-      );
-    } else if (typeof args[key as keyof typeof args] === 'string') {
-      const valueToTransform = literalChecks[key];
-      result[key] = args[key as keyof typeof args] === valueToTransform;
-    } else {
-      result[key] = args[key as keyof typeof args];
-    }
-  }
-  return result;
-};
-
-export async function checker(args: Filter, user?: any) {
+export async function checker(args: any, user?: any) {
   const checkedArgs = preprocessArgs(args, {
-    status: 'restocking',
-    'user.profile.mantra': 'zen',
+    // status: { OR: ["restocking", startsWith: 'stock'] },
+    // 'user.profile.mantra': 'zen',
+    // manufacturerId: user?.id,
+    // spaceId: user?.spaceId ?? user?.space?.id,
   });
   const checkedArgsWithAuth = { ...checkedArgs, _withAuth: !!user?.id };
   console.log('args', util.formatWithOptions({ depth: 20 }, args));
@@ -193,25 +33,33 @@ export async function checker(args: Filter, user?: any) {
   );
   const { Context, em } = await init();
   const z3 = Context('main');
-  const { Solver, Int, Bool, Or, And } = z3;
+  const { Solver, Int, Bool, Or, And, Implies } = z3;
 
   // create variables
   const userAge = Int.const('user.age'); // to generate dynamically
   const userId = Int.const('user.id'); // to generate dynamically
-  const userProfileMantra = Bool.const('user.profile.mantra'); // to generate dynamically
+  // const userProfileMantra = Bool.const('user.profile.mantra'); // to generate dynamically
+  // const userProfileMantra = checkCondition(
+  //   args?.['user.profile.mantra'] ?? user?.profile?.mantra,
+  //   (v) => v === 'zen',
+  // ); // to generate dynamically
   const alcoholLevel = Int.const('alcoholLevel'); // to generate dynamically
   const inStock = Bool.const('inStock'); // to generate dynamically
-  const status = Bool.const('status'); // to generate dynamically
-  const manufacturerId = Int.const('manufacturerId'); // to generate dynamically
+  // const status = Bool.const('status'); // to generate dynamically
+  // const manufacturerId = Bool.const('manufacturerId'); // to generate dynamically
   const _withAuth = Bool.const('_withAuth');
+  console.log(
+    'checkCondition status test',
+    checkCondition(args?.status, (v) => v === 'test'),
+  );
   const variables = {
     userAge,
     userId,
-    userProfileMantra,
+    // userProfileMantra,
     alcoholLevel,
     inStock,
-    status,
-    manufacturerId,
+    // status,
+    // manufacturerId,
     _withAuth,
   }; // to generate dynamically
 
@@ -220,12 +68,43 @@ export async function checker(args: Filter, user?: any) {
   solver.add(...assertions);
   // to generate dynamically
   solver.add(
-    Or(And(userId.eq(manufacturerId), _withAuth), userProfileMantra),
-    And(
-      Or(inStock, status),
-      Or(userAge.ge(18), And(userAge.ge(16), alcoholLevel.lt(5))),
+    Or(
+      And(
+        checkCondition(args?.status, (v) => v === 'test', true),
+        userAge.eq(0),
+      ),
+      checkCondition(
+        args?.spaceId,
+        (v) => v === user?.spaceId || v === user?.space?.id,
+        !!_withAuth,
+      ),
+      And(
+        Or(
+          And(
+            Bool.val(
+              args?.manufacturerId ? args.manufacturerId === user?.id : true,
+            ),
+            _withAuth,
+          ),
+          checkCondition(
+            args?.['user.profile.mantra'] ?? user?.profile?.mantra,
+            (v) => v === 'zen',
+          ),
+          // userProfileMantra,
+        ),
+        And(
+          Or(
+            inStock,
+            checkCondition(args?.status, (v) => v === 'restocking'),
+            checkCondition(args?.status, (v) => v.startsWith('stock')),
+            // Bool.val(args?.status ? args?.status?.startsWith('stock') : true),
+          ),
+          Or(userAge.ge(18), And(userAge.ge(16), alcoholLevel.lt(5))),
+        ),
+      ),
     ),
   );
+  // solver.add(Bool.val(false));
   let solution: Record<string, string> = {};
   if ((await solver.check()) === 'sat') {
     const model = solver.model();
@@ -234,6 +113,8 @@ export async function checker(args: Filter, user?: any) {
     });
     const formattedAssertions = assertions.map((a) => a.toString());
     await killThreads(em);
+    console.log('solution', solution);
+    console.log('assertions', formattedAssertions);
     return { result: true, assertions: formattedAssertions, solution };
   } else {
     console.error("couldn't find a solution");
@@ -268,8 +149,9 @@ const processCondition = (
   z3: Context<'main'>,
 ): Assertion[] => {
   const assertions: Assertion[] = [];
-  if (typeof condition === 'undefined') {
+  if (typeof condition === 'undefined' || typeof condition === 'string') {
     // noop
+    // user properties are not pre-processed so we have to filter them out if string
   } else if (typeof condition === 'number') {
     assertions.push(variable.eq(condition));
   } else if (typeof condition === 'boolean') {
@@ -337,6 +219,12 @@ const processFilter = (
     const orFilter = filter as OrFilter;
     const tempAssertions: Assertion[] = [];
     for (const filter of orFilter.OR) {
+      console.log('filter', filter, 'isUserFilter', isUserFilter);
+      console.log(
+        'variables',
+        util.formatWithOptions({ depth: 20 }, variables),
+      );
+
       tempAssertions.push(...processFilter(variables, z3, filter));
     }
     const orAssertion = z3.Or(...tempAssertions);
@@ -382,4 +270,67 @@ export const buildAssertions = (
     assertions.map((a) => a.toString()),
   );
   return assertions;
+};
+
+const preprocessArgs = (
+  args: any,
+  literalChecks: Record<string, string | { startsWith: string }>,
+  parent?: string,
+) => {
+  console.log('args', args, literalChecks, 'parent', parent);
+  const result = {} as any;
+  if (typeof args === 'string') {
+    // { condition: { in: ['string', 'string'] } }
+    return args === literalChecks[parent as keyof typeof literalChecks];
+  }
+  for (const key in args) {
+    if (Array.isArray(args[key as keyof typeof args])) {
+      result[key] = (args[key as keyof typeof args] as OrFilter[]).map((arg) =>
+        preprocessArgs(arg, literalChecks, key === 'OR' ? parent : key),
+      );
+    } else if (typeof args[key as keyof typeof args] === 'object') {
+      result[key] = preprocessArgs(
+        args[key as keyof typeof args],
+        literalChecks,
+        key === 'OR' ? parent : key,
+      );
+    } else if (
+      ['string', 'number'].includes(typeof args[key as keyof typeof args]) &&
+      key in literalChecks
+    ) {
+      const valueToTransform = literalChecks[key];
+      result[key] = args[key as keyof typeof args] === valueToTransform;
+    } else {
+      result[key] = args[key as keyof typeof args];
+    }
+  }
+  return result;
+};
+
+const checkCondition = (
+  // args: Filter,
+  value:
+    | string
+    | number
+    | boolean
+    | { startsWith: string }
+    | { in: string[] }
+    | undefined,
+  condition: (t: any) => boolean,
+  mandatory = false,
+): boolean => {
+  if (value === undefined) return !mandatory;
+  if (typeof value === 'string' || typeof value === 'number') {
+    return condition(value);
+  }
+  if (typeof value === 'object' && 'startsWith' in value) {
+    return condition(value.startsWith);
+  }
+  if (typeof value === 'object' && 'in' in value) {
+    return value.in.some(condition);
+  }
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  return true;
 };
